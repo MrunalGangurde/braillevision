@@ -1,0 +1,1984 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BrailleVision — Physical Braille Recognition</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;1,9..144,300&display=swap" rel="stylesheet">
+<style>
+/* ─── DESIGN TOKENS ─────────────────────────────────────────── */
+:root {
+  --bg:          #070a0e;
+  --surface:     #0d1117;
+  --surface2:    #141b24;
+  --surface3:    #1c2535;
+  --surface4:    #232e42;
+  --border:      rgba(255,255,255,0.06);
+  --border2:     rgba(255,255,255,0.11);
+  --border3:     rgba(255,255,255,0.18);
+  --accent:      #39f79a;
+  --accent-dim:  rgba(57,247,154,0.10);
+  --accent-glow: rgba(57,247,154,0.22);
+  --accent2:     #5cc8ff;
+  --accent2-dim: rgba(92,200,255,0.10);
+  --text:        #dce1ee;
+  --text2:       #8d97b0;
+  --text3:       #515c72;
+  --danger:      #ff5c5c;
+  --danger-dim:  rgba(255,92,92,0.10);
+  --warn:        #ffbc45;
+  --warn-dim:    rgba(255,188,69,0.10);
+  --radius:      9px;
+  --radius-lg:   15px;
+  --radius-xl:   20px;
+  --shadow:      0 8px 32px rgba(0,0,0,0.5);
+}
+
+/* ─── RESET ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Mono', monospace;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+/* ─── SCANLINE TEXTURE ───────────────────────────────────────── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0,0,0,0) 0px,
+    rgba(0,0,0,0) 2px,
+    rgba(0,0,0,0.03) 2px,
+    rgba(0,0,0,0.03) 3px
+  );
+  pointer-events: none;
+  z-index: 1000;
+}
+
+/* ─── HEADER ─────────────────────────────────────────────────── */
+header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0 1.5rem;
+  height: 54px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(7,10,14,0.96);
+  backdrop-filter: blur(20px);
+  flex-shrink: 0;
+  z-index: 20;
+  position: relative;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Braille B logo — 6 dots */
+.logo-dots {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3.5px;
+  width: 24px;
+  height: 34px;
+}
+.ld {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  transition: all 0.4s ease;
+}
+.ld.on  { background: var(--accent); box-shadow: 0 0 5px var(--accent-glow); }
+.ld.off { background: var(--surface4); border: 1px solid var(--border2); }
+
+.logo-wordmark {
+  font-family: 'Fraunces', serif;
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  color: var(--accent);
+  line-height: 1;
+}
+.logo-sub {
+  font-size: 0.52rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text3);
+  margin-top: 1px;
+  display: block;
+}
+
+/* Engine pill — replaces "Powered by X" */
+.engine-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border: 1px solid var(--border2);
+  border-radius: 20px;
+  color: var(--text3);
+  background: var(--surface);
+}
+.engine-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent2);
+  box-shadow: 0 0 4px var(--accent2-dim);
+  animation: pulse 2s ease infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.75)} }
+
+.header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-badge {
+  display: none;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border: 1px solid rgba(57,247,154,0.3);
+  border-radius: 20px;
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+.live-badge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: blink 1.2s ease infinite;
+}
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+.hdr-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  background: none;
+  color: var(--text3);
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.hdr-btn:hover { background: var(--surface2); color: var(--text); border-color: var(--border3); }
+.hdr-btn.tts-on { color: var(--accent2); border-color: rgba(92,200,255,0.3); background: var(--accent2-dim); }
+.hdr-btn.tts-speaking { color: var(--accent); border-color: rgba(57,247,154,0.3); background: var(--accent-dim); }
+
+/* ─── LAYOUT ─────────────────────────────────────────────────── */
+.app-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 350px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ─── LEFT PANEL ─────────────────────────────────────────────── */
+.left-panel {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.panel-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--surface);
+}
+.tab {
+  flex: 1;
+  padding: 0.7rem 1rem;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text3);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.18s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.tab:hover { color: var(--text2); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.tab-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; min-height: 0; }
+.tab-panel.active { display: flex; }
+
+/* ─── VIDEO AREA ─────────────────────────────────────────────── */
+.video-wrap {
+  flex: 1;
+  position: relative;
+  background: #000;
+  overflow: hidden;
+  min-height: 0;
+}
+video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+#captureCanvas { display: none; }
+
+/* Idle state */
+.cam-idle {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: var(--surface);
+}
+.cam-idle-dots {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  opacity: 0.18;
+}
+.cid { width: 20px; height: 20px; border-radius: 50%; background: var(--text); }
+.cam-idle-label {
+  font-size: 0.68rem;
+  color: var(--text3);
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+}
+
+/* Overlay */
+.cam-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: none;
+}
+
+/* Scan frame */
+.scan-frame {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -52%);
+  width: min(82%, 420px);
+  height: min(50%, 190px);
+}
+.sf-corner {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-style: solid;
+  border-color: var(--accent);
+  border-width: 0;
+}
+.sf-tl { top: 0; left: 0; border-top-width: 2px; border-left-width: 2px; border-radius: 2px 0 0 0; }
+.sf-tr { top: 0; right: 0; border-top-width: 2px; border-right-width: 2px; border-radius: 0 2px 0 0; }
+.sf-bl { bottom: 0; left: 0; border-bottom-width: 2px; border-left-width: 2px; border-radius: 0 0 0 2px; }
+.sf-br { bottom: 0; right: 0; border-bottom-width: 2px; border-right-width: 2px; border-radius: 0 0 2px 0; }
+
+/* Beam animation */
+.scan-beam {
+  position: absolute;
+  left: 4px; right: 4px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
+  top: 0;
+  opacity: 0;
+  animation: scanBeam 3s ease-in-out infinite;
+}
+@keyframes scanBeam {
+  0%   { top: 0%; opacity: 0; }
+  8%   { opacity: 0.9; }
+  90%  { opacity: 0.9; }
+  100% { top: 100%; opacity: 0; }
+}
+
+/* Frame label */
+.frame-label {
+  position: absolute;
+  bottom: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.55rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: rgba(57,247,154,0.6);
+  white-space: nowrap;
+}
+
+/* Guidance strip */
+.guidance-strip {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  padding: 10px 14px;
+  background: linear-gradient(transparent, rgba(7,10,14,0.88));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.guide-indicator {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+.guide-indicator.ok { background: var(--accent); }
+.guide-msg {
+  font-size: 0.6rem;
+  color: var(--text2);
+  letter-spacing: 0.02em;
+}
+
+/* Processing flash */
+.scan-flash {
+  position: absolute;
+  inset: 0;
+  background: rgba(57,247,154,0.06);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.scan-flash.active { opacity: 1; }
+
+/* ─── UPLOAD TAB ─────────────────────────────────────────────── */
+.upload-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem;
+  gap: 1rem;
+  overflow: hidden;
+}
+
+.drop-zone {
+  flex: 1;
+  border: 2px dashed var(--border2);
+  border-radius: var(--radius-xl);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: all 0.22s;
+  position: relative;
+  overflow: hidden;
+  min-height: 120px;
+}
+.drop-zone:hover, .drop-zone.drag {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.drop-zone input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.dz-icon {
+  font-size: 2.2rem;
+  line-height: 1;
+  opacity: 0.5;
+}
+.dz-text { font-size: 0.75rem; color: var(--text2); }
+.dz-hint { font-size: 0.6rem; color: var(--text3); text-align: center; max-width: 220px; line-height: 1.5; }
+
+#uploadPreviewWrap {
+  flex: 1;
+  min-height: 0;
+  display: none;
+  position: relative;
+}
+#uploadPreview {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: var(--radius-lg);
+  background: var(--surface2);
+  display: block;
+  max-height: 240px;
+}
+.upload-change {
+  margin-top: 6px;
+  font-size: 0.6rem;
+  color: var(--text3);
+  text-align: center;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.upload-change:hover { color: var(--text2); }
+
+/* ─── HISTORY TAB ────────────────────────────────────────────── */
+.history-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface4) transparent;
+}
+.hist-item {
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  align-items: center;
+  transition: all 0.14s;
+  cursor: default;
+}
+.hist-item:hover { background: var(--surface2); border-color: var(--border2); }
+.hist-thumb {
+  width: 48px;
+  height: 32px;
+  border-radius: 5px;
+  object-fit: cover;
+  background: var(--surface3);
+  flex-shrink: 0;
+}
+.hist-body { flex: 1; min-width: 0; }
+.hist-text {
+  font-size: 0.7rem;
+  font-family: 'Fraunces', serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.hist-meta {
+  font-size: 0.55rem;
+  color: var(--text3);
+  margin-top: 2px;
+  display: flex;
+  gap: 8px;
+}
+.hist-replay {
+  font-size: 0.58rem;
+  padding: 3px 8px;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  background: none;
+  color: var(--text3);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.14s;
+  flex-shrink: 0;
+}
+.hist-replay:hover { color: var(--accent); border-color: rgba(57,247,154,0.3); }
+
+/* ─── CONTROLS BAR ───────────────────────────────────────────── */
+.controls-bar {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  background: var(--surface);
+}
+
+.btn {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.68rem;
+  padding: 7px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border2);
+  cursor: pointer;
+  transition: all 0.14s;
+  letter-spacing: 0.03em;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  line-height: 1;
+}
+.btn:disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
+
+.btn-primary {
+  background: var(--accent);
+  color: #070a0e;
+  border-color: var(--accent);
+  font-weight: 500;
+}
+.btn-primary:hover { background: #68fdb7; box-shadow: 0 0 12px var(--accent-glow); }
+
+.btn-ghost { background: transparent; color: var(--text); }
+.btn-ghost:hover { background: var(--surface2); border-color: var(--border3); }
+
+.btn-auto { background: transparent; color: var(--text); }
+.btn-auto.on { background: var(--accent-dim); color: var(--accent); border-color: rgba(57,247,154,0.3); }
+
+.btn-danger { background: transparent; color: var(--danger); border-color: rgba(255,92,92,0.2); }
+.btn-danger:hover { background: var(--danger-dim); }
+
+.status-pill {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.58rem;
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text3);
+}
+.sp-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--text3);
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.sp-dot.ready  { background: var(--accent); box-shadow: 0 0 4px var(--accent-glow); }
+.sp-dot.working { background: var(--warn); animation: blink 0.4s infinite; }
+.sp-dot.error  { background: var(--danger); }
+
+/* ─── RIGHT PANEL ────────────────────────────────────────────── */
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.rp-header {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.rp-title {
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text3);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rp-title::before {
+  content: '⠞';
+  font-size: 0.9rem;
+  color: var(--text3);
+  opacity: 0.5;
+}
+.rp-actions { display: flex; gap: 5px; }
+.rp-btn {
+  font-size: 0.58rem;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text3);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.14s;
+}
+.rp-btn:hover { color: var(--text); border-color: var(--border2); }
+.rp-btn.danger:hover { color: var(--danger); border-color: rgba(255,92,92,0.3); }
+
+.results-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface4) transparent;
+}
+
+/* Empty state */
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 2rem;
+  text-align: center;
+}
+.es-braille {
+  font-size: 2rem;
+  letter-spacing: 8px;
+  color: var(--surface4);
+  line-height: 1;
+  animation: breathe 4s ease infinite;
+}
+@keyframes breathe {
+  0%,100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.es-label {
+  font-family: 'Fraunces', serif;
+  font-size: 0.85rem;
+  font-style: italic;
+  color: var(--text3);
+  font-weight: 300;
+}
+.es-hint {
+  font-size: 0.58rem;
+  color: var(--text3);
+  opacity: 0.5;
+  max-width: 160px;
+  line-height: 1.6;
+}
+
+/* ─── RESULT CARDS ───────────────────────────────────────────── */
+.result-card {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  animation: cardIn 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  background: var(--bg);
+}
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.result-card.fresh {
+  border-color: rgba(57,247,154,0.25);
+  box-shadow: 0 0 0 1px rgba(57,247,154,0.08), 0 4px 20px rgba(0,0,0,0.4);
+}
+.result-card.error-card { border-color: rgba(255,92,92,0.2); }
+
+.result-thumb {
+  width: 100%;
+  height: 80px;
+  object-fit: cover;
+  display: block;
+  background: var(--surface2);
+}
+.result-body { padding: 10px 12px; }
+
+.result-label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.result-label {
+  font-size: 0.52rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+
+/* Confidence badges */
+.conf {
+  font-size: 0.5rem;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid;
+  letter-spacing: 0.06em;
+}
+.conf-high { color: var(--accent); border-color: rgba(57,247,154,0.25); background: var(--accent-dim); }
+.conf-med  { color: var(--warn);   border-color: rgba(255,188,69,0.25);  background: var(--warn-dim); }
+.conf-low  { color: var(--danger); border-color: rgba(255,92,92,0.25);   background: var(--danger-dim); }
+
+.result-meta {
+  font-size: 0.5rem;
+  color: var(--text3);
+  margin-left: auto;
+}
+
+.result-text {
+  font-family: 'Fraunces', serif;
+  font-size: 1rem;
+  font-weight: 300;
+  color: var(--text);
+  line-height: 1.55;
+  margin: 4px 0 8px;
+}
+.result-text.error-text {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--danger);
+}
+
+.result-notes {
+  font-size: 0.58rem;
+  color: var(--text3);
+  line-height: 1.55;
+  padding: 6px 8px;
+  background: var(--surface2);
+  border-radius: 6px;
+  border-left: 2px solid var(--border3);
+  margin-bottom: 8px;
+}
+
+.result-footer {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.result-time { font-size: 0.52rem; color: var(--text3); margin-right: auto; }
+
+.ri-btn {
+  width: 26px; height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: none;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--text3);
+  transition: all 0.14s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ri-btn:hover { background: var(--surface2); color: var(--accent); border-color: rgba(57,247,154,0.3); }
+
+/* Loading card */
+.loading-card {
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ldots { display: flex; gap: 4px; }
+.ldots span {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: ldot 1s ease infinite;
+}
+.ldots span:nth-child(2) { animation-delay: 0.15s; }
+.ldots span:nth-child(3) { animation-delay: 0.30s; }
+@keyframes ldot { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-5px)} }
+.loading-text { font-size: 0.65rem; color: var(--text3); }
+
+/* ─── STATS BAR ─────────────────────────────────────────────── */
+.stats-bar {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 20px;
+  flex-shrink: 0;
+  background: var(--surface);
+}
+.stat { display: flex; flex-direction: column; gap: 1px; }
+.stat-val { font-size: 0.9rem; font-weight: 500; color: var(--text); line-height: 1; }
+.stat-key {
+  font-size: 0.52rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text3);
+}
+
+/* ─── SETTINGS DRAWER ────────────────────────────────────────── */
+.settings-drawer {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  max-height: 58vh;
+  background: var(--surface);
+  border-top: 1px solid var(--border2);
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 30;
+  overflow-y: auto;
+  padding: 1.2rem 1.5rem 2rem;
+}
+.settings-drawer.open { transform: translateY(0); }
+.drawer-handle {
+  width: 36px; height: 4px;
+  border-radius: 2px;
+  background: var(--border3);
+  margin: 0 auto 1.2rem;
+}
+.settings-title {
+  font-family: 'Fraunces', serif;
+  font-size: 0.95rem;
+  font-weight: 300;
+  color: var(--text);
+  margin-bottom: 1rem;
+}
+
+/* API key field */
+.api-key-group {
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.api-key-label {
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text3);
+  margin-bottom: 5px;
+  display: block;
+}
+.api-key-input {
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.68rem;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  outline: none;
+  transition: border-color 0.15s;
+  letter-spacing: 0.04em;
+}
+.api-key-input:focus { border-color: var(--accent); }
+.api-key-input::placeholder { color: var(--text3); letter-spacing: 0; }
+.api-key-hint {
+  font-size: 0.55rem;
+  color: var(--text3);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.setting-group { display: flex; flex-direction: column; gap: 4px; }
+.sg-label {
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text3);
+}
+.sg-select {
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.68rem;
+  padding: 7px 9px;
+  border-radius: var(--radius);
+  appearance: none;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.sg-select:focus { border-color: var(--accent); }
+
+.sg-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s;
+}
+.sg-toggle:hover { border-color: var(--border3); }
+.sg-toggle input { display: none; }
+.toggle-track {
+  width: 30px; height: 16px;
+  border-radius: 8px;
+  background: var(--surface4);
+  border: 1px solid var(--border2);
+  position: relative;
+  transition: all 0.18s;
+  flex-shrink: 0;
+}
+.toggle-track::after {
+  content: '';
+  position: absolute;
+  left: 2px; top: 2px;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--text3);
+  transition: all 0.18s;
+}
+.sg-toggle input:checked + .toggle-track {
+  background: var(--accent-dim);
+  border-color: rgba(57,247,154,0.4);
+}
+.sg-toggle input:checked + .toggle-track::after {
+  left: 16px;
+  background: var(--accent);
+}
+.toggle-label { font-size: 0.67rem; color: var(--text2); }
+
+/* ─── GUIDE OVERLAY ──────────────────────────────────────────── */
+.guide-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(7,10,14,0.93);
+  z-index: 50;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(8px);
+}
+.guide-overlay.open { display: flex; }
+
+.guide-box {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-xl);
+  padding: 1.75rem;
+  max-width: 460px;
+  width: 90%;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow);
+}
+.guide-title {
+  font-family: 'Fraunces', serif;
+  font-size: 1.2rem;
+  font-weight: 300;
+  color: var(--accent);
+  margin-bottom: 1.25rem;
+  text-align: center;
+}
+.guide-step { display: flex; gap: 12px; margin-bottom: 1rem; align-items: flex-start; }
+.gs-num {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  border: 1px solid rgba(57,247,154,0.3);
+  color: var(--accent);
+  font-size: 0.65rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.gs-head { font-size: 0.75rem; font-weight: 500; color: var(--text); margin-bottom: 2px; }
+.gs-text { font-size: 0.65rem; color: var(--text3); line-height: 1.6; }
+
+.guide-close {
+  width: 100%;
+  margin-top: 1.25rem;
+  padding: 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border2);
+  background: none;
+  color: var(--text2);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+.guide-close:hover { background: var(--surface2); color: var(--accent); border-color: rgba(57,247,154,0.3); }
+
+/* ─── TOAST ─────────────────────────────────────────────────── */
+.toast {
+  position: fixed;
+  top: 66px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-6px);
+  background: var(--surface3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  padding: 7px 16px;
+  font-size: 0.67rem;
+  color: var(--accent);
+  opacity: 0;
+  transition: all 0.25s;
+  z-index: 60;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ─── ENLARGE MODAL ──────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(7,10,14,0.95);
+  z-index: 55;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(12px);
+}
+.modal-overlay.open { display: flex; }
+.modal-box {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-xl);
+  padding: 2rem;
+  max-width: 520px;
+  width: 90%;
+  box-shadow: var(--shadow);
+}
+.modal-text {
+  font-family: 'Fraunces', serif;
+  font-size: 1.8rem;
+  font-weight: 300;
+  color: var(--text);
+  line-height: 1.5;
+  margin-bottom: 1.25rem;
+}
+.modal-close {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.7rem;
+  padding: 8px 16px;
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text3);
+  cursor: pointer;
+  transition: all 0.14s;
+}
+.modal-close:hover { color: var(--text); border-color: var(--border3); }
+
+/* ─── RESPONSIVE ─────────────────────────────────────────────── */
+@media (max-width: 680px) {
+  .app-body { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+  .right-panel { max-height: 42vh; border-top: 1px solid var(--border); }
+  .settings-grid { grid-template-columns: 1fr; }
+  .engine-pill { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">
+    <div class="logo-dots" id="logoDots">
+      <div class="ld on"></div><div class="ld off"></div>
+      <div class="ld on"></div><div class="ld on"></div>
+      <div class="ld off"></div><div class="ld on"></div>
+    </div>
+    <div>
+      <span class="logo-wordmark">BrailleVision</span>
+      <span class="logo-sub">physical dot recognition</span>
+    </div>
+  </div>
+
+  <div class="engine-pill">
+    <div class="engine-dot"></div>
+    neural dot engine · v3
+  </div>
+
+  <div class="header-right">
+    <span class="live-badge" id="liveBadge">live</span>
+    <button class="hdr-btn tts-on" id="ttsBtn" onclick="toggleMute()" title="Toggle voice output">🔊</button>
+    <button class="hdr-btn" onclick="openGuide()" title="How to use">?</button>
+    <button class="hdr-btn" onclick="toggleSettings()" title="Settings">⚙</button>
+  </div>
+</header>
+
+<!-- MAIN LAYOUT -->
+<div class="app-body">
+
+  <!-- LEFT PANEL -->
+  <div class="left-panel">
+
+    <div class="panel-tabs">
+      <button class="tab active" id="tabCamera" onclick="switchTab('camera')">
+        <span>📷</span> camera
+      </button>
+      <button class="tab" id="tabUpload" onclick="switchTab('upload')">
+        <span>🖼</span> upload
+      </button>
+      <button class="tab" id="tabHistory" onclick="switchTab('history')">
+        <span>📋</span> history
+      </button>
+    </div>
+
+    <!-- CAMERA TAB -->
+    <div class="tab-panel active" id="panelCamera">
+      <div class="video-wrap">
+        <!-- Idle placeholder -->
+        <div class="cam-idle" id="camIdle">
+          <div class="cam-idle-dots">
+            <div class="cid"></div><div class="cid"></div>
+            <div class="cid"></div><div class="cid"></div>
+            <div class="cid"></div><div class="cid"></div>
+          </div>
+          <div class="cam-idle-label">camera not started</div>
+        </div>
+
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="captureCanvas"></canvas>
+
+        <!-- Camera overlay -->
+        <div class="cam-overlay" id="camOverlay">
+          <div class="scan-frame">
+            <div class="sf-corner sf-tl"></div>
+            <div class="sf-corner sf-tr"></div>
+            <div class="sf-corner sf-bl"></div>
+            <div class="sf-corner sf-br"></div>
+            <div class="scan-beam"></div>
+            <div class="frame-label">align braille within frame</div>
+          </div>
+          <div class="guidance-strip">
+            <div class="guide-indicator" id="guideIndicator"></div>
+            <span class="guide-msg" id="guideMsg">hold steady — good lighting improves accuracy</span>
+          </div>
+        </div>
+
+        <div class="scan-flash" id="scanFlash"></div>
+      </div>
+    </div>
+
+    <!-- UPLOAD TAB -->
+    <div class="tab-panel" id="panelUpload">
+      <div class="upload-area">
+        <div class="drop-zone" id="dropZone">
+          <input type="file" id="fileInput" accept="image/*" onchange="handleFile(event)">
+          <div class="dz-icon">⠃⠗</div>
+          <div class="dz-text">drop image or click to browse</div>
+          <div class="dz-hint">embossed paper · handwritten · braille writer · any camera photo</div>
+        </div>
+        <div id="uploadPreviewWrap">
+          <img id="uploadPreview" alt="Braille image">
+          <div class="upload-change" onclick="resetUpload()">↩ choose different image</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- HISTORY TAB -->
+    <div class="tab-panel" id="panelHistory">
+      <div class="history-area" id="historyList">
+        <div class="empty-state" style="flex:none;padding:1.5rem">
+          <div class="es-braille">⠓</div>
+          <div class="es-label">no history yet</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONTROLS BAR -->
+    <div class="controls-bar">
+      <button class="btn btn-primary" id="btnStart" onclick="startCamera()">▶ start camera</button>
+      <button class="btn btn-ghost" id="btnScan" onclick="doScan()" disabled>scan</button>
+      <button class="btn btn-auto" id="btnAuto" onclick="toggleAuto()" disabled>auto: off</button>
+      <button class="btn btn-danger" id="btnStop" onclick="stopCamera()" disabled style="display:none">■ stop</button>
+      <button class="btn btn-ghost" id="btnScanUpload" onclick="doScan()" disabled style="display:none">scan image</button>
+      <div class="status-pill">
+        <div class="sp-dot" id="spDot"></div>
+        <span id="spText">ready</span>
+      </div>
+    </div>
+
+  </div><!-- /left-panel -->
+
+  <!-- RIGHT PANEL -->
+  <div class="right-panel">
+    <div class="rp-header">
+      <span class="rp-title">decoded output</span>
+      <div class="rp-actions">
+        <button class="rp-btn" onclick="exportResults()">export .txt</button>
+        <button class="rp-btn danger" onclick="clearResults()">clear</button>
+      </div>
+    </div>
+
+    <div class="results-scroll" id="resultsList">
+      <div class="empty-state" id="emptyState">
+        <div class="es-braille">⠓⠑⠇⠇⠕</div>
+        <div class="es-label">awaiting scan</div>
+        <div class="es-hint">start camera and press scan, or upload a braille image</div>
+      </div>
+    </div>
+
+    <div class="stats-bar">
+      <div class="stat">
+        <span class="stat-val" id="statTotal">0</span>
+        <span class="stat-key">scans</span>
+      </div>
+      <div class="stat">
+        <span class="stat-val" id="statDecoded">0</span>
+        <span class="stat-key">decoded</span>
+      </div>
+      <div class="stat">
+        <span class="stat-val" id="statWords">0</span>
+        <span class="stat-key">words</span>
+      </div>
+      <div class="stat" style="margin-left:auto">
+        <span class="stat-val" id="statTimer">00:00</span>
+        <span class="stat-key">session</span>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /app-body -->
+
+<!-- SETTINGS DRAWER -->
+<div class="settings-drawer" id="settingsDrawer">
+  <div class="drawer-handle"></div>
+  <div class="settings-title">settings</div>
+
+  <!-- API key field - described neutrally -->
+  <div class="api-key-group">
+    <span class="api-key-label">recognition engine key</span>
+    <input
+      type="password"
+      class="api-key-input"
+      id="apiKeyInput"
+      placeholder="sk-ant-…"
+      autocomplete="off"
+      spellcheck="false"
+    >
+    <div class="api-key-hint">
+      Required to enable dot recognition. Stored only in memory — never saved to disk.
+      Required to enable dot recognition — get yours from your provider's console.
+    </div>
+  </div>
+
+  <div class="settings-grid">
+    <div class="setting-group">
+      <span class="sg-label">scan interval</span>
+      <select class="sg-select" id="settInterval">
+        <option value="2000">2 seconds</option>
+        <option value="4000" selected>4 seconds</option>
+        <option value="6000">6 seconds</option>
+        <option value="10000">10 seconds</option>
+      </select>
+    </div>
+    <div class="setting-group">
+      <span class="sg-label">voice speed</span>
+      <select class="sg-select" id="settSpeed">
+        <option value="0.75">slow</option>
+        <option value="0.9" selected>normal</option>
+        <option value="1.2">fast</option>
+        <option value="1.5">very fast</option>
+      </select>
+    </div>
+    <div class="setting-group">
+      <span class="sg-label">braille grade</span>
+      <select class="sg-select" id="settGrade">
+        <option value="auto" selected>auto-detect</option>
+        <option value="1">grade 1</option>
+        <option value="2">grade 2</option>
+      </select>
+    </div>
+    <div class="setting-group">
+      <span class="sg-label">image quality</span>
+      <select class="sg-select" id="settQuality">
+        <option value="0.75">standard</option>
+        <option value="0.90" selected>high</option>
+        <option value="1.0">maximum</option>
+      </select>
+    </div>
+    <label class="sg-toggle">
+      <input type="checkbox" id="settAutoSpeak" checked>
+      <div class="toggle-track"></div>
+      <span class="toggle-label">auto-speak result</span>
+    </label>
+    <label class="sg-toggle">
+      <input type="checkbox" id="settNotes" checked>
+      <div class="toggle-track"></div>
+      <span class="toggle-label">show detection notes</span>
+    </label>
+    <label class="sg-toggle">
+      <input type="checkbox" id="settHistory" checked>
+      <div class="toggle-track"></div>
+      <span class="toggle-label">save to history</span>
+    </label>
+    <label class="sg-toggle">
+      <input type="checkbox" id="settVoiceGuide">
+      <div class="toggle-track"></div>
+      <span class="toggle-label">voice camera tips</span>
+    </label>
+  </div>
+</div>
+
+<!-- GUIDE OVERLAY -->
+<div class="guide-overlay" id="guideOverlay" onclick="e=>e.target===this&&closeGuide()">
+  <div class="guide-box">
+    <div class="guide-title">⠃⠗⠁⠊⠇⠇⠑ how to use BrailleVision</div>
+
+    <div class="guide-step">
+      <div class="gs-num">1</div>
+      <div>
+        <div class="gs-head">add your recognition key</div>
+        <div class="gs-text">Open ⚙ settings and paste your recognition engine key. It stays in memory only — never saved. Enter your recognition API key. You can get one from your provider's developer console.</div>
+      </div>
+    </div>
+    <div class="guide-step">
+      <div class="gs-num">2</div>
+      <div>
+        <div class="gs-head">start camera or upload an image</div>
+        <div class="gs-text">Use live camera for real-time scanning, or switch to Upload tab to scan a photo from your phone. Both embossed paper and printed Braille work.</div>
+      </div>
+    </div>
+    <div class="guide-step">
+      <div class="gs-num">3</div>
+      <div>
+        <div class="gs-head">position Braille in the frame</div>
+        <div class="gs-text">Hold the Braille flat inside the corner markers. Side lighting from a lamp or window reveals embossed dots best. 15–30 cm distance is ideal.</div>
+      </div>
+    </div>
+    <div class="guide-step">
+      <div class="gs-num">4</div>
+      <div>
+        <div class="gs-head">scan — single or auto</div>
+        <div class="gs-text">Press Scan for one capture, or enable Auto to scan continuously every few seconds. Decoded English appears on the right and is read aloud automatically.</div>
+      </div>
+    </div>
+    <div class="guide-step">
+      <div class="gs-num">5</div>
+      <div>
+        <div class="gs-head">review and export</div>
+        <div class="gs-text">Each result card has speak 🔊, copy ⎘, and enlarge ⤢ buttons. Export all decoded text as a .txt file from the top-right of the results panel.</div>
+      </div>
+    </div>
+
+    <button class="guide-close" onclick="closeGuide()">got it — let's scan</button>
+  </div>
+</div>
+
+<!-- ENLARGE MODAL -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-text" id="modalText"></div>
+    <button class="modal-close" onclick="closeModal()">close</button>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   BrailleVision v3 — Physical Braille Recognition
+   Architecture: single-file SPA, zero dependencies, zero backend
+   Recognition: vision-language model via REST API
+   ═══════════════════════════════════════════════════════════════ */
+
+'use strict';
+
+// ─── STATE ────────────────────────────────────────────────────
+const state = {
+  stream: null,
+  autoTimer: null,
+  isAuto: false,
+  isProcessing: false,
+  currentTab: 'camera',
+  uploadB64: null,
+  uploadSrc: null,
+  ttsMuted: false,
+  scanCount: 0,
+  decodedCount: 0,
+  wordCount: 0,
+  sessionStart: Date.now(),
+  history: [],
+  settingsOpen: false,
+  cardCount: 0,
+  loadCount: 0,
+};
+
+// ─── DOM REFS ─────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const video = $('video');
+const canvas = $('captureCanvas');
+const ctx = canvas.getContext('2d');
+
+// ─── SESSION TIMER ────────────────────────────────────────────
+setInterval(() => {
+  const s = Math.floor((Date.now() - state.sessionStart) / 1000);
+  $('statTimer').textContent =
+    String(Math.floor(s / 60)).padStart(2, '0') + ':' +
+    String(s % 60).padStart(2, '0');
+}, 1000);
+
+// ─── LOGO ANIMATION ───────────────────────────────────────────
+{
+  const dots = $('logoDots').querySelectorAll('.ld');
+  // Braille letter patterns: B, R, A, I, L, L, E
+  const pats = [
+    [1,0,1,0,0,0], // B
+    [1,1,1,1,0,1], // R
+    [1,0,0,1,0,0], // A
+    [0,0,1,1,0,0], // I
+    [1,1,1,0,1,0], // L
+    [1,1,1,0,1,0], // L
+    [1,1,0,1,0,0], // E
+  ];
+  let pi = 0;
+  setInterval(() => {
+    const p = pats[pi++ % pats.length];
+    dots.forEach((d, i) => {
+      d.className = 'ld ' + (p[i] ? 'on' : 'off');
+    });
+  }, 1600);
+}
+
+// ─── TABS ─────────────────────────────────────────────────────
+function switchTab(tab) {
+  state.currentTab = tab;
+  ['camera', 'upload', 'history'].forEach(t => {
+    const tId = 'tab' + t.charAt(0).toUpperCase() + t.slice(1);
+    const pId = 'panel' + t.charAt(0).toUpperCase() + t.slice(1);
+    $(tId).className = 'tab' + (t === tab ? ' active' : '');
+    $(pId).className = 'tab-panel' + (t === tab ? ' active' : '');
+  });
+
+  // Show/hide controls
+  const cam = tab === 'camera';
+  const upl = tab === 'upload';
+  $('btnStart').style.display        = cam ? '' : 'none';
+  $('btnStop').style.display         = (cam && state.stream) ? '' : 'none';
+  $('btnScan').style.display         = cam ? '' : 'none';
+  $('btnAuto').style.display         = cam ? '' : 'none';
+  $('btnScanUpload').style.display   = upl ? '' : 'none';
+  if (upl) $('btnScanUpload').disabled = !state.uploadB64;
+}
+
+// ─── CAMERA ───────────────────────────────────────────────────
+async function startCamera() {
+  try {
+    setStatus('working', 'requesting camera…');
+    state.stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
+    });
+    video.srcObject = state.stream;
+    $('camIdle').style.display = 'none';
+    $('camOverlay').style.display = 'block';
+    $('liveBadge').style.display = 'flex';
+    $('btnStart').disabled = true;
+    $('btnScan').disabled = false;
+    $('btnAuto').disabled = false;
+    $('btnStop').style.display = '';
+    $('btnStop').disabled = false;
+    setStatus('ready', 'camera active');
+    if ($('settVoiceGuide').checked) {
+      speak('Camera started. Align Braille within the frame and press Scan.');
+    }
+    startGuidance();
+  } catch (err) {
+    setStatus('error', 'camera error');
+    toast('Camera error: ' + err.message);
+  }
+}
+
+function stopCamera() {
+  if (state.stream) {
+    state.stream.getTracks().forEach(t => t.stop());
+    state.stream = null;
+  }
+  stopAuto();
+  $('btnStart').disabled = false;
+  $('btnScan').disabled = true;
+  $('btnAuto').disabled = true;
+  $('btnStop').style.display = 'none';
+  $('liveBadge').style.display = 'none';
+  $('camIdle').style.display = 'flex';
+  $('camOverlay').style.display = 'none';
+  setStatus('', 'stopped · tap start camera');
+  stopGuidance();
+}
+
+// ─── GUIDANCE TIPS ────────────────────────────────────────────
+const TIPS = [
+  { ok: true,  msg: 'hold steady — optimal distance ~20 cm' },
+  { ok: true,  msg: 'keep braille flat and in focus' },
+  { ok: false, msg: 'tip: side lighting reveals embossed dots better' },
+  { ok: true,  msg: 'consistent lighting improves cell detection' },
+  { ok: false, msg: 'avoid direct overhead flash on embossed paper' },
+  { ok: true,  msg: 'high quality setting gives best results' },
+];
+let tipIdx = 0, guidanceTimer = null;
+
+function startGuidance() {
+  guidanceTimer = setInterval(() => {
+    const tip = TIPS[tipIdx++ % TIPS.length];
+    $('guideIndicator').className = 'guide-indicator' + (tip.ok ? ' ok' : '');
+    $('guideMsg').textContent = tip.msg;
+  }, 5000);
+}
+function stopGuidance() {
+  clearInterval(guidanceTimer);
+}
+
+// ─── FILE UPLOAD ──────────────────────────────────────────────
+function handleFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    state.uploadSrc = ev.target.result;
+    state.uploadB64 = state.uploadSrc.split(',')[1];
+    $('uploadPreview').src = state.uploadSrc;
+    $('uploadPreviewWrap').style.display = 'block';
+    $('dropZone').style.display = 'none';
+    $('btnScanUpload').disabled = false;
+    setStatus('ready', 'image loaded · press scan');
+  };
+  reader.readAsDataURL(file);
+}
+
+function resetUpload() {
+  state.uploadSrc = null;
+  state.uploadB64 = null;
+  $('uploadPreviewWrap').style.display = 'none';
+  $('dropZone').style.display = 'flex';
+  $('fileInput').value = '';
+  $('btnScanUpload').disabled = true;
+}
+
+// Drag & drop
+const dz = $('dropZone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+dz.addEventListener('drop', e => {
+  e.preventDefault();
+  dz.classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if (file?.type.startsWith('image/')) {
+    handleFile({ target: { files: [file] } });
+  }
+});
+
+// ─── AUTO SCAN ────────────────────────────────────────────────
+function toggleAuto() {
+  state.isAuto ? stopAuto() : startAuto();
+}
+
+function startAuto() {
+  if (!state.stream) return;
+  state.isAuto = true;
+  const btn = $('btnAuto');
+  btn.textContent = 'auto: on';
+  btn.className = 'btn btn-auto on';
+  doScan();
+  const interval = parseInt($('settInterval').value);
+  state.autoTimer = setInterval(doScan, interval);
+}
+
+function stopAuto() {
+  state.isAuto = false;
+  clearInterval(state.autoTimer);
+  state.autoTimer = null;
+  const btn = $('btnAuto');
+  btn.textContent = 'auto: off';
+  btn.className = 'btn btn-auto';
+}
+
+// ─── MAIN SCAN LOGIC ──────────────────────────────────────────
+async function doScan() {
+  if (state.isProcessing) return;
+  if (state.currentTab === 'camera' && !state.stream) return;
+  if (state.currentTab === 'upload' && !state.uploadB64) return;
+
+  const apiKey = $('apiKeyInput').value.trim();
+  if (!apiKey) {
+    toast('Add your recognition key in ⚙ settings first');
+    if (state.isAuto) stopAuto();
+    return;
+  }
+
+  state.isProcessing = true;
+  setStatus('working', 'scanning…');
+  triggerFlash();
+
+  // Capture image
+  let imgB64, thumbSrc;
+  if (state.currentTab === 'upload') {
+    imgB64 = state.uploadB64;
+    thumbSrc = state.uploadSrc;
+  } else {
+    canvas.width  = video.videoWidth  || 1280;
+    canvas.height = video.videoHeight || 720;
+    ctx.drawImage(video, 0, 0);
+    const q = parseFloat($('settQuality').value);
+    thumbSrc = canvas.toDataURL('image/jpeg', q);
+    imgB64 = thumbSrc.split(',')[1];
+  }
+
+  const loadId = addLoader();
+  state.scanCount++;
+  $('statTotal').textContent = state.scanCount;
+
+  try {
+    const result = await recognise(imgB64, apiKey);
+    removeLoader(loadId);
+
+    if (result.error) {
+      addErrorCard(result.message, thumbSrc);
+      setStatus('error', result.message.substring(0, 40));
+    } else if (result.nobraille) {
+      addErrorCard('No physical Braille detected — reposition and try again', thumbSrc);
+      setStatus('ready', 'no braille found');
+    } else {
+      addResultCard(result, thumbSrc);
+      state.decodedCount++;
+      const wc = result.text.split(/\s+/).filter(Boolean).length;
+      state.wordCount += wc;
+      $('statDecoded').textContent = state.decodedCount;
+      $('statWords').textContent = state.wordCount;
+      setStatus('ready', 'decoded: ' + result.text.substring(0, 32) + (result.text.length > 32 ? '…' : ''));
+
+      if (!state.ttsMuted && $('settAutoSpeak').checked) speak(result.text);
+      if ($('settHistory').checked) addHistory(result, thumbSrc);
+    }
+  } catch (err) {
+    removeLoader(loadId);
+    addErrorCard('Network error: ' + err.message, thumbSrc);
+    setStatus('error', 'network error');
+  }
+
+  state.isProcessing = false;
+}
+
+// ─── RECOGNITION ENGINE ───────────────────────────────────────
+async function recognise(imgB64, apiKey) {
+  const gradeEl = $('settGrade').value;
+  const gradeInstruction = gradeEl === 'auto'
+    ? 'Auto-detect whether this is Grade 1 or Grade 2 English Braille.'
+    : `Decode as Grade ${gradeEl} English Braille.`;
+
+  const prompt = `You are a precision physical Braille recognition system.
+
+TASK: Decode physical Braille dots from this image.
+
+WHAT TO LOOK FOR:
+- Raised embossed bumps on paper (visible as subtle shadows or highlights)
+- Printed or stamped dark dots arranged in grid patterns
+- Handwritten Braille (slate and stylus) — irregular but valid dot patterns
+- Braille writer output (more uniform, machine-pressed)
+
+RECOGNITION PROCESS:
+1. Locate all visible dot positions across the image
+2. Group dots into Braille cells: each cell is a 2-column × 3-row grid of 6 positions
+   - Left column: positions 1 (top), 2 (mid), 3 (bottom)
+   - Right column: positions 4 (top), 5 (mid), 6 (bottom)
+3. Read cells strictly left-to-right, top-to-bottom
+4. ${gradeInstruction}
+5. Apply capital sign (⠠), number indicator (⠼), and Grade 2 contractions correctly
+6. Handle punctuation and spacing per standard English Braille rules
+
+STRUCTURED OUTPUT — follow this format exactly:
+Line 1: decoded English text
+Line 2: ---
+Line 3: Grade: [1|2] | Confidence: [HIGH|MEDIUM|LOW] | Cells: [integer]
+Line 4: Detection note (one sentence: what dot type was visible, any challenges)
+
+If no Braille present: output exactly NO_BRAILLE_DETECTED`;
+
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 800,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imgB64 } },
+          { type: 'text', text: prompt },
+        ],
+      }],
+    }),
+  });
+
+  const data = await resp.json();
+
+  if (data.error) {
+    return { error: true, message: data.error.message || 'Recognition engine error' };
+  }
+
+  const raw = (data.content?.[0]?.text || '').trim();
+
+  if (raw.startsWith('NO_BRAILLE')) {
+    return { nobraille: true };
+  }
+
+  return parseEngineOutput(raw);
+}
+
+function parseEngineOutput(raw) {
+  const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+  const sep = lines.indexOf('---');
+
+  if (sep === -1) {
+    // Graceful fallback — treat entire response as text
+    return { text: raw, confidence: 'low', grade: '?', cells: '?', notes: '' };
+  }
+
+  const text  = lines.slice(0, sep).join(' ').trim();
+  const meta  = lines[sep + 1] || '';
+  const notes = lines.slice(sep + 2).join(' ').trim();
+
+  const confM  = meta.match(/Confidence:\s*(HIGH|MEDIUM|LOW)/i);
+  const gradeM = meta.match(/Grade:\s*(\d)/i);
+  const cellM  = meta.match(/Cells:\s*(\d+)/i);
+
+  return {
+    text,
+    confidence: confM  ? confM[1].toLowerCase()  : 'low',
+    grade:      gradeM ? gradeM[1]               : '?',
+    cells:      cellM  ? cellM[1]                : '?',
+    notes,
+  };
+}
+
+// ─── FLASH EFFECT ─────────────────────────────────────────────
+function triggerFlash() {
+  const f = $('scanFlash');
+  f.classList.add('active');
+  setTimeout(() => f.classList.remove('active'), 120);
+}
+
+// ─── LOADERS ──────────────────────────────────────────────────
+function addLoader() {
+  const id = 'ld_' + (++state.loadCount);
+  removeEmpty();
+  const el = document.createElement('div');
+  el.className = 'loading-card';
+  el.id = id;
+  el.innerHTML = `
+    <div class="ldots"><span></span><span></span><span></span></div>
+    <span class="loading-text">reading dot patterns…</span>`;
+  $('resultsList').prepend(el);
+  return id;
+}
+function removeLoader(id) {
+  const el = $(id);
+  if (el) el.remove();
+}
+
+// ─── RESULT CARDS ─────────────────────────────────────────────
+function addErrorCard(msg, thumb) {
+  removeEmpty();
+  const card = document.createElement('div');
+  card.className = 'result-card error-card';
+  card.innerHTML = `
+    ${thumb ? `<img class="result-thumb" src="${thumb}" alt="scan">` : ''}
+    <div class="result-body">
+      <div class="result-text error-text">${esc(msg)}</div>
+      <div class="result-footer">
+        <span class="result-time">${new Date().toLocaleTimeString()}</span>
+      </div>
+    </div>`;
+  $('resultsList').prepend(card);
+}
+
+function addResultCard(r, thumb) {
+  state.cardCount++;
+  removeEmpty();
+  const id = 'card_' + state.cardCount;
+  const confClass = r.confidence === 'high' ? 'conf-high'
+                  : r.confidence === 'medium' ? 'conf-med' : 'conf-low';
+  const showNotes = $('settNotes').checked && r.notes;
+  const txt = escJ(r.text);
+
+  const card = document.createElement('div');
+  card.id = id;
+  card.className = 'result-card fresh';
+  setTimeout(() => card.classList.remove('fresh'), 2000);
+
+  card.innerHTML = `
+    ${thumb ? `<img class="result-thumb" src="${thumb}" alt="scan">` : ''}
+    <div class="result-body">
+      <div class="result-label-row">
+        <span class="result-label">decoded text</span>
+        <span class="conf ${confClass}">${r.confidence.toUpperCase()}</span>
+        <span class="result-meta">gr.${esc(r.grade)} · ${esc(r.cells)} cells</span>
+      </div>
+      <div class="result-text">${esc(r.text)}</div>
+      ${showNotes ? `<div class="result-notes">${esc(r.notes)}</div>` : ''}
+      <div class="result-footer">
+        <span class="result-time">${new Date().toLocaleTimeString()}</span>
+        <button class="ri-btn" title="read aloud" onclick="speak('${txt}')">🔊</button>
+        <button class="ri-btn" title="copy" onclick="copyText('${txt}')">⎘</button>
+        <button class="ri-btn" title="enlarge" onclick="enlargeText('${txt}')">⤢</button>
+      </div>
+    </div>`;
+
+  $('resultsList').prepend(card);
+}
+
+function removeEmpty() {
+  const e = $('emptyState');
+  if (e) e.remove();
+}
+
+function clearResults() {
+  $('resultsList').innerHTML = `
+    <div class="empty-state" id="emptyState">
+      <div class="es-braille">⠓⠑⠇⠇⠕</div>
+      <div class="es-label">awaiting scan</div>
+      <div class="es-hint">start camera and press scan, or upload a braille image</div>
+    </div>`;
+  state.scanCount = 0;
+  state.decodedCount = 0;
+  state.wordCount = 0;
+  $('statTotal').textContent = '0';
+  $('statDecoded').textContent = '0';
+  $('statWords').textContent = '0';
+}
+
+// ─── HISTORY ──────────────────────────────────────────────────
+function addHistory(r, thumb) {
+  state.history.unshift({
+    text: r.text,
+    thumb,
+    time: new Date().toLocaleTimeString(),
+    conf: r.confidence,
+  });
+  if (state.history.length > 50) state.history.pop();
+  renderHistory();
+}
+
+function renderHistory() {
+  const list = $('historyList');
+  if (!state.history.length) {
+    list.innerHTML = `
+      <div class="empty-state" style="flex:none;padding:1.5rem">
+        <div class="es-braille">⠓</div>
+        <div class="es-label">no history yet</div>
+      </div>`;
+    return;
+  }
+  list.innerHTML = state.history.map((h, i) => `
+    <div class="hist-item">
+      <img class="hist-thumb" src="${h.thumb}" alt="scan ${i}">
+      <div class="hist-body">
+        <div class="hist-text">${esc(h.text)}</div>
+        <div class="hist-meta">
+          <span>${h.time}</span>
+          <span>${h.conf.toUpperCase()}</span>
+        </div>
+      </div>
+      <button class="hist-replay" onclick="speak('${escJ(h.text)}')">🔊</button>
+    </div>`).join('');
+}
+
+// ─── TTS ──────────────────────────────────────────────────────
+function speak(text) {
+  if (!window.speechSynthesis || state.ttsMuted) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = parseFloat($('settSpeed').value);
+  const btn = $('ttsBtn');
+  u.onstart = () => btn.className = 'hdr-btn tts-speaking';
+  u.onend = u.onerror = () => btn.className = 'hdr-btn tts-on';
+  window.speechSynthesis.speak(u);
+}
+
+function toggleMute() {
+  state.ttsMuted = !state.ttsMuted;
+  const btn = $('ttsBtn');
+  btn.className = 'hdr-btn' + (state.ttsMuted ? '' : ' tts-on');
+  btn.textContent = state.ttsMuted ? '🔇' : '🔊';
+  window.speechSynthesis.cancel();
+  toast(state.ttsMuted ? 'voice muted' : 'voice enabled');
+}
+
+// ─── UTILITIES ────────────────────────────────────────────────
+function setStatus(type, text) {
+  $('spDot').className = 'sp-dot' + (type ? ' ' + type : '');
+  $('spText').textContent = text;
+}
+
+function copyText(text) {
+  navigator.clipboard.writeText(text).then(() => toast('copied to clipboard'));
+}
+
+function enlargeText(text) {
+  $('modalText').textContent = text;
+  $('modalOverlay').classList.add('open');
+}
+function closeModal() {
+  $('modalOverlay').classList.remove('open');
+}
+
+function exportResults() {
+  const lines = ['BrailleVision Export — ' + new Date().toLocaleString(), '='.repeat(50)];
+  document.querySelectorAll('.result-text:not(.error-text)').forEach((el, i) => {
+    lines.push('[' + (i + 1) + '] ' + el.textContent.trim());
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'braillevision_' + Date.now() + '.txt';
+  a.click();
+  toast('exported as .txt');
+}
+
+function toast(msg, dur = 2600) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), dur);
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escJ(s) {
+  return String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,' ');
+}
+
+// ─── SETTINGS ────────────────────────────────────────────────
+function toggleSettings() {
+  state.settingsOpen = !state.settingsOpen;
+  $('settingsDrawer').className = 'settings-drawer' + (state.settingsOpen ? ' open' : '');
+}
+$('settingsDrawer').addEventListener('click', e => {
+  if (e.target === $('settingsDrawer')) toggleSettings();
+});
+
+// ─── GUIDE ───────────────────────────────────────────────────
+function openGuide()  { $('guideOverlay').classList.add('open'); }
+function closeGuide() { $('guideOverlay').classList.remove('open'); }
+$('guideOverlay').addEventListener('click', e => {
+  if (e.target === $('guideOverlay')) closeGuide();
+});
+
+// ─── INIT ────────────────────────────────────────────────────
+setStatus('', 'ready · tap start camera');
+</script>
+</body>
+</html>
