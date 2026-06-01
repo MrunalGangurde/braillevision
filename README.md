@@ -1,4 +1,3 @@
-````markdown
 # ⠃⠗ BrailleVision
 
 ## Real-Time Physical Braille to English Using Camera-Based AI
